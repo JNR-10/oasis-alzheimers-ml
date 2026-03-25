@@ -1,0 +1,29 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.DS_Store
+.qodo/
+
+# Raw OASIS imaging data (too large for GitHub)
+oasis1-disc*/
+
+# Raw Excel data files
+*.xlsx
+
+# Generated outputs (reproducible via scripts)
+data/processed/
+data/splits/
+models/
+results/
+
+*.log
