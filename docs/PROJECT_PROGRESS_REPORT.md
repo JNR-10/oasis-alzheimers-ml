@@ -23,7 +23,7 @@
 |----------|-------|
 | Total samples | 416 |
 | Original features | 12 (after excluding identifiers) |
-| Features after preprocessing | 9 |
+| Features after preprocessing | 8 |
 | Target variable | CDR (Clinical Dementia Rating) |
 | Target encoding | Binary: CDR = 0 → healthy (0), CDR > 0 → dementia (1) |
 | Data types | 1 categorical (M/F), 10 numeric, 1 constant (Hand) |
@@ -33,7 +33,7 @@
 
 | Feature | Type | Description | Range |
 |---------|------|-------------|-------|
-| M/F | Categorical | Gender | M / F |
+| M/F | Binary categorical | Gender (label-encoded) | 0 / 1 |
 | Age | Numeric | Subject age | 18–96 |
 | Educ | Numeric | Years of education | 1–5 (ordinal scale) |
 | SES | Numeric | Socioeconomic status | 1–5 (ordinal scale) |
@@ -43,7 +43,7 @@
 | ASF | Numeric | Atlas scaling factor | 0.876–1.587 |
 | CDR | Numeric | Clinical Dementia Rating (target) | 0, 0.5, 1, 2 |
 
-**Excluded features:** `ID` (identifier), `Hand` (near-constant: 97% right-handed), `Delay` (all NaN for cross-sectional data).
+**Excluded features:** `ID` (identifier), `Subject_ID` (identifier — must not be used as a training feature), `Hand` (near-constant: 97% right-handed), `Delay` (all NaN for cross-sectional data).
 
 ### 2.1 Class Distribution
 
@@ -111,9 +111,9 @@ The following preprocessing steps were implemented in `src/preprocessor.py` usin
 
 **Step 1 — Missing value imputation:** Median imputation for numeric features (SES, MMSE); mode imputation for categorical features (M/F). Median was chosen over mean to be robust to outliers and the skewed distribution of MMSE in dementia subjects. The `Delay` column (100% NaN) was automatically dropped.
 
-**Step 2 — Categorical encoding:** Label encoding applied to `M/F` (gender), converting Male/Female to binary 0/1.
+**Step 2 — Categorical encoding:** Label encoding applied to `M/F` (gender), converting Male/Female to binary 0/1. This column is **not scaled** — StandardScaler is only applied to continuous numeric features, not binary categorical ones.
 
-**Step 3 — Column removal:** Dropped `Hand` (97% right-handed — near-zero variance), `ID` (identifier), and `Delay` (all NaN). These columns carry no predictive signal.
+**Step 3 — Column removal:** Dropped `Hand` (97% right-handed — near-zero variance), `ID` (identifier), `Subject_ID` (identifier — would cause data leakage if used as a feature), and `Delay` (all NaN). These columns carry no predictive signal.
 
 **Step 4 — Binary target creation:** CDR was converted to a binary target:
 - CDR = 0 → class 0 (healthy)
@@ -124,9 +124,9 @@ The following preprocessing steps were implemented in `src/preprocessor.py` usin
 - Training: 332 samples (252 healthy, 80 dementia)
 - Test: 84 samples (64 healthy, 20 dementia)
 
-**Step 6 — Feature scaling:** `StandardScaler` (zero mean, unit variance) applied to all 9 features. The scaler was fit **only on training data** and applied to both sets to prevent data leakage.
+**Step 6 — Feature scaling:** `StandardScaler` (zero mean, unit variance) applied to the 7 continuous numeric features only. The binary `M/F` column is left unscaled (already 0/1). The scaler was fit **only on training data** and applied to both sets to prevent data leakage.
 
-**Final preprocessed dataset:** 416 samples × 9 features → 332 train / 84 test.
+**Final preprocessed dataset:** 416 samples × 8 features → 332 train / 84 test.
 
 ---
 
@@ -134,23 +134,23 @@ The following preprocessing steps were implemented in `src/preprocessor.py` usin
 
 ### 4.1 Baseline Model Training (Completed)
 
-Eight ML classifiers were trained and evaluated on the preprocessed OASIS-1 tabular data:
+Eight ML classifiers were trained using **5-fold stratified cross-validation** on the training set, then evaluated on the holdout test set:
 
-| Model | Accuracy | Precision | Recall | F1 Score | ROC AUC |
-|-------|----------|-----------|--------|----------|---------|
-| Logistic Regression | **88.10%** | 0.750 | 0.750 | 0.750 | 0.938 |
-| AdaBoost | **88.10%** | 0.778 | 0.700 | 0.737 | 0.931 |
-| XGBoost | 86.90% | 0.714 | 0.750 | 0.732 | 0.936 |
-| Naive Bayes | 86.90% | 0.655 | 0.950 | 0.776 | 0.954 |
-| SVM | 85.71% | 0.700 | 0.700 | 0.700 | 0.923 |
-| Random Forest | 84.52% | 0.684 | 0.650 | 0.667 | 0.938 |
-| Gradient Boosting | 84.52% | 0.667 | 0.700 | 0.683 | 0.926 |
-| KNN | 80.95% | 0.611 | 0.550 | 0.579 | 0.890 |
+| Model | Test Acc | CV Acc (mean±std) | Test F1 | CV AUC | Test ROC AUC |
+|-------|----------|-------------------|---------|--------|------|
+| Logistic Regression | **89.29%** | 89.76% ± 2.92% | 0.781 | 0.963 | 0.943 |
+| XGBoost | 86.90% | 89.76% ± 2.57% | 0.744 | 0.969 | 0.931 |
+| Naive Bayes | 86.90% | 86.15% ± 1.73% | 0.776 | 0.959 | 0.954 |
+| Gradient Boosting | 85.71% | **90.37%** ± 2.40% | 0.714 | **0.977** | 0.920 |
+| AdaBoost | 85.71% | 88.86% ± 2.75% | 0.700 | 0.966 | 0.938 |
+| Random Forest | 84.52% | 90.67% ± 1.07% | 0.683 | 0.971 | 0.920 |
+| SVM | 84.52% | 89.15% ± 4.09% | 0.698 | 0.941 | 0.901 |
+| KNN | 83.33% | 87.66% ± 3.44% | 0.650 | 0.933 | 0.882 |
 
 ![Model Accuracy Comparison](figures/model_accuracy_comparison.png)
-*Figure 7: Phase 1 baseline model accuracy comparison. Logistic Regression and AdaBoost lead at 88.1%, while KNN lags at 81.0%.*
+*Figure 7: Phase 1 baseline model accuracy comparison. Logistic Regression leads at 89.3% test accuracy, with CV scores ranging from 86.2% to 90.7%.*
 
-Best performing models are Logistic Regression and AdaBoost, both at 88.10% accuracy with ROC AUC > 0.93. However, this high accuracy raised concerns about *what* the models are actually learning — motivating the ablation study below.
+Logistic Regression is the best on the holdout test (89.29%), while Gradient Boosting has the highest CV accuracy (90.37% ± 2.40%). The consistency between CV and test scores confirms that the models are not overfitting. However, this high accuracy raised concerns about *what* the models are actually learning — motivating the ablation study below.
 
 ### 4.2 Feature Importance Analysis
 
@@ -160,8 +160,8 @@ We analyzed feature importance across all tree-based models to understand which 
 *Figure 8: Feature importance across Random Forest, XGBoost, and Gradient Boosting. MMSE (highlighted in red) dominates all three models, accounting for 37.8%–61.7% of total importance. This indicates the models are primarily learning a MMSE threshold rather than structural brain patterns.*
 
 Key findings:
-- **Random Forest:** MMSE = 37.8%, followed by nWBV (20.0%) and Age (14.0%)
-- **XGBoost:** MMSE = 50.5%, followed by Age and nWBV
+- **Random Forest:** MMSE = 35.7%, followed by Age (19.6%) and nWBV (16.6%)
+- **XGBoost:** MMSE = 48.8%, followed by Age and nWBV
 - **Gradient Boosting:** MMSE = 61.7%, extreme concentration on a single feature
 
 This concentration on MMSE — a cognitive test that directly measures dementia symptoms — is a red flag for clinical reliability.
@@ -172,18 +172,18 @@ To rigorously quantify the MMSE dependency, we ran a systematic ablation study: 
 
 | Scenario | Avg Accuracy | Drop from Baseline |
 |----------|-------------|-------------------|
-| Baseline (all 9 features) | 86.5% | — |
-| Without MMSE | 81.0% | −5.6% |
-| Without global brain metrics (nWBV, eTIV, ASF) | 83.3% | −3.2% |
-| Without MMSE + global metrics | 76.6% | −9.9% |
-| Only demographics (Age, Gender, Education, SES) | 76.6% | −9.9% |
-| **Only MMSE (1 feature)** | **86.9%** | **+0.4%** (higher than baseline!) |
-| Only global brain metrics (3 features) | 81.3% | −5.2% |
+| Baseline (all 8 features) | 86.9% | — |
+| Without MMSE | 81.0% | −6.0% |
+| Without global brain metrics (nWBV, eTIV, ASF) | 82.9% | −4.0% |
+| Without MMSE + global metrics | 76.6% | −10.3% |
+| Only demographics (Age, Gender, Education, SES) | 76.6% | −10.3% |
+| **Only MMSE (1 feature)** | **86.9%** | **0.0%** (matches full baseline!) |
+| Only global brain metrics (3 features) | 81.3% | −5.6% |
 
 ![Ablation Summary](figures/ablation_summary.png)
 *Figure 9: Ablation study results. The "Only MMSE" scenario (using just 1 feature) achieves 86.9% accuracy — matching the full 9-feature baseline. Removing MMSE drops accuracy by 5.6%, confirming extreme dependency.*
 
-**Critical finding:** A model using *only MMSE* (a single feature) achieves **86.9% accuracy** — actually higher than the 9-feature baseline average of 86.5%. This proves the baseline models are essentially **MMSE proxies**: 8 of 9 features contribute nothing beyond what MMSE alone provides.
+**Critical finding:** A model using *only MMSE* (a single feature) achieves **86.9% accuracy** — exactly matching the 8-feature baseline average of 86.9%. This proves the baseline models are essentially **MMSE proxies**: 7 of 8 features contribute nothing beyond what MMSE alone provides.
 
 **Clinical implication:** MMSE is a cognitive screening test that *measures* dementia symptoms. A model that predicts dementia primarily from MMSE is engaging in **circular reasoning** — predicting the outcome from a direct measure of the outcome. Such a model:
 - Cannot detect early-stage Alzheimer's (when MMSE is still normal)
@@ -206,13 +206,13 @@ To rigorously quantify the MMSE dependency, we ran a systematic ablation study: 
 
 ## 5. Challenges Faced
 
-1. **MMSE dominance / circular reasoning:** The most significant challenge. Baseline models achieve high accuracy by memorizing MMSE scores rather than learning structural brain patterns. MMSE accounts for 37.8%–61.7% of feature importance across tree-based models, and a single-feature MMSE model matches the full baseline (86.9% vs 86.5%). This makes the models clinically unreliable — they cannot detect early-stage Alzheimer's (when MMSE is still normal) and add no diagnostic value beyond a simple cognitive screening. Addressing this requires extracting region-specific imaging features from raw MRI data.
+1. **MMSE dominance / circular reasoning:** The most significant challenge. Baseline models achieve high accuracy by memorizing MMSE scores rather than learning structural brain patterns. MMSE accounts for 35.7%–61.7% of feature importance across tree-based models, and a single-feature MMSE model matches the full 8-feature baseline (86.9% vs 86.9%). This makes the models clinically unreliable — they cannot detect early-stage Alzheimer's (when MMSE is still normal) and add no diagnostic value beyond a simple cognitive screening. Addressing this requires extracting region-specific imaging features from raw MRI data.
 
 2. **Class imbalance (3:1 ratio):** The dataset has 316 healthy vs 100 dementia subjects (76% vs 24%). This means a naive "predict all healthy" classifier achieves 76% accuracy. We observed that some models (e.g., KNN at 55% recall) struggle to identify the minority dementia class. While not extreme, this imbalance affects model evaluation — accuracy alone is insufficient, requiring F1 and ROC AUC as complementary metrics.
 
 3. **CDR = NaN ambiguity (43.5% of data):** 181 of 416 subjects have no CDR rating. We treated these as healthy (CDR = 0) based on dataset documentation, but this decision significantly impacts class distribution. Excluding them would reduce the dataset to 235 samples with a ~58/42 class split — a different learning problem entirely. Our choice maximizes sample size but introduces potential label noise.
 
-4. **Limited feature set (9 tabular features):** With only demographics and global brain summary metrics, the models lack Alzheimer's-specific biomarkers: hippocampal volume, entorhinal cortex atrophy, regional gray matter patterns, and ventricular enlargement — features that neurologists rely on for clinical diagnosis.
+4. **Limited feature set (8 tabular features):** With only demographics and global brain summary metrics, the models lack Alzheimer's-specific biomarkers: hippocampal volume, entorhinal cortex atrophy, regional gray matter patterns, and ventricular enlargement — features that neurologists rely on for clinical diagnosis.
 
 5. **Feature redundancy:** eTIV and ASF have r = −0.97 correlation (mathematically derived from each other), effectively providing only one independent feature. Similarly, nWBV reflects *global* atrophy, which can be caused by normal aging, vascular dementia, or other conditions — not Alzheimer's specifically.
 

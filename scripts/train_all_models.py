@@ -1,8 +1,10 @@
 import click
 import pandas as pd
+import numpy as np
 import sys
 from pathlib import Path
 import time
+from sklearn.model_selection import StratifiedKFold, cross_validate
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -23,7 +25,11 @@ from src.utils import save_json, print_metrics
               type=int,
               default=42,
               help='Random state for reproducibility')
-def train_all(data_dir, output_dir, random_state):
+@click.option('--cv-folds',
+              type=int,
+              default=5,
+              help='Number of cross-validation folds')
+def train_all(data_dir, output_dir, random_state, cv_folds):
     click.echo("="*70)
     click.echo("OASIS - Training All Models")
     click.echo("="*70)
@@ -49,8 +55,13 @@ def train_all(data_dir, output_dir, random_state):
     
     click.echo(f"  ✓ Training set: {X_train.shape[0]} samples, {X_train.shape[1]} features")
     click.echo(f"  ✓ Test set: {X_test.shape[0]} samples, {X_test.shape[1]} features")
+    click.echo(f"  ✓ Features: {list(X_train.columns)}")
     
-    click.echo(f"\n[2/3] Training {len(models_to_train)} models...")
+    # Set up k-fold cross-validation
+    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
+    scoring = ['accuracy', 'precision', 'recall', 'f1', 'roc_auc']
+    
+    click.echo(f"\n[2/3] Training {len(models_to_train)} models with {cv_folds}-fold CV...")
     
     results = []
     
@@ -65,14 +76,45 @@ def train_all(data_dir, output_dir, random_state):
             click.echo(f"  Initializing {model_type}...")
             ml_model = MLModel(model_type=model_type, random_state=random_state)
             
-            click.echo(f"  Training...")
+            # --- K-Fold Cross-Validation on training set ---
+            click.echo(f"  Running {cv_folds}-fold cross-validation...")
+            cv_results = cross_validate(
+                ml_model.model, X_train, y_train,
+                cv=skf, scoring=scoring, return_train_score=False, n_jobs=-1
+            )
+            
+            cv_accuracy_mean = cv_results['test_accuracy'].mean()
+            cv_accuracy_std = cv_results['test_accuracy'].std()
+            cv_f1_mean = cv_results['test_f1'].mean()
+            cv_f1_std = cv_results['test_f1'].std()
+            cv_roc_auc_mean = cv_results['test_roc_auc'].mean()
+            cv_roc_auc_std = cv_results['test_roc_auc'].std()
+            cv_precision_mean = cv_results['test_precision'].mean()
+            cv_recall_mean = cv_results['test_recall'].mean()
+            
+            click.echo(f"  CV Accuracy:  {cv_accuracy_mean:.4f} ± {cv_accuracy_std:.4f}")
+            click.echo(f"  CV F1 Score:  {cv_f1_mean:.4f} ± {cv_f1_std:.4f}")
+            click.echo(f"  CV ROC AUC:   {cv_roc_auc_mean:.4f} ± {cv_roc_auc_std:.4f}")
+            
+            # --- Train on full training set, evaluate on holdout test ---
+            click.echo(f"  Training on full training set...")
             ml_model.train(X_train, y_train)
             
-            click.echo(f"  Evaluating...")
+            click.echo(f"  Evaluating on holdout test set...")
             metrics = ml_model.evaluate(X_test, y_test)
             
             training_time = time.time() - start_time
             metrics['training_time'] = training_time
+            
+            # Store CV results in metrics
+            metrics['cv_accuracy_mean'] = cv_accuracy_mean
+            metrics['cv_accuracy_std'] = cv_accuracy_std
+            metrics['cv_f1_mean'] = cv_f1_mean
+            metrics['cv_f1_std'] = cv_f1_std
+            metrics['cv_roc_auc_mean'] = cv_roc_auc_mean
+            metrics['cv_roc_auc_std'] = cv_roc_auc_std
+            metrics['cv_folds'] = cv_folds
+            metrics['cv_fold_accuracies'] = cv_results['test_accuracy'].tolist()
             
             print_metrics(metrics, model_type)
             
@@ -98,6 +140,12 @@ def train_all(data_dir, output_dir, random_state):
                 'recall': metrics['recall'],
                 'f1_score': metrics['f1_score'],
                 'roc_auc': metrics['roc_auc'],
+                'cv_accuracy_mean': cv_accuracy_mean,
+                'cv_accuracy_std': cv_accuracy_std,
+                'cv_f1_mean': cv_f1_mean,
+                'cv_f1_std': cv_f1_std,
+                'cv_roc_auc_mean': cv_roc_auc_mean,
+                'cv_roc_auc_std': cv_roc_auc_std,
                 'training_time': training_time
             })
             
@@ -105,6 +153,8 @@ def train_all(data_dir, output_dir, random_state):
             
         except Exception as e:
             click.echo(f"  ✗ Error training {model_type}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             results.append({
                 'model': model_type,
                 'accuracy': 0.0,
@@ -112,6 +162,12 @@ def train_all(data_dir, output_dir, random_state):
                 'recall': 0.0,
                 'f1_score': 0.0,
                 'roc_auc': 0.0,
+                'cv_accuracy_mean': 0.0,
+                'cv_accuracy_std': 0.0,
+                'cv_f1_mean': 0.0,
+                'cv_f1_std': 0.0,
+                'cv_roc_auc_mean': 0.0,
+                'cv_roc_auc_std': 0.0,
                 'training_time': 0.0,
                 'error': str(e)
             })
@@ -127,11 +183,12 @@ def train_all(data_dir, output_dir, random_state):
     click.echo(f"\n{'='*70}")
     click.echo("MODEL COMPARISON - Ranked by Accuracy")
     click.echo(f"{'='*70}")
-    click.echo(f"\n{'Model':<20} {'Accuracy':<10} {'Precision':<10} {'Recall':<10} {'F1':<10} {'ROC AUC':<10} {'Time(s)':<10}")
-    click.echo("-"*70)
+    click.echo(f"\n{'Model':<22} {'Test Acc':<10} {'CV Acc (mean±std)':<22} {'Test F1':<10} {'CV AUC':<10} {'Time(s)':<10}")
+    click.echo("-"*84)
     
     for _, row in results_df.iterrows():
-        click.echo(f"{row['model']:<20} {row['accuracy']:<10.4f} {row['precision']:<10.4f} {row['recall']:<10.4f} {row['f1_score']:<10.4f} {row['roc_auc']:<10.4f} {row['training_time']:<10.2f}")
+        cv_str = f"{row['cv_accuracy_mean']:.4f}±{row['cv_accuracy_std']:.4f}"
+        click.echo(f"{row['model']:<22} {row['accuracy']:<10.4f} {cv_str:<22} {row['f1_score']:<10.4f} {row['cv_roc_auc_mean']:<10.4f} {row['training_time']:<10.2f}")
     
     click.echo(f"\n{'='*70}")
     click.echo("✓ All models trained successfully!")

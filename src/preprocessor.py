@@ -24,7 +24,7 @@ class OASISPreprocessor:
         if target_col is None:
             raise ValueError(f"No target column found. Looking for: {potential_targets}")
         
-        exclude_cols = [target_col, 'ID', 'Subject ID', 'MRI ID', 'dataset', 'Hand']
+        exclude_cols = [target_col, 'ID', 'Subject ID', 'Subject_ID', 'MRI ID', 'dataset', 'Hand']
         feature_cols = [col for col in df.columns if col not in exclude_cols]
         
         return target_col, feature_cols
@@ -76,9 +76,19 @@ class OASISPreprocessor:
         
         return df_binary
     
-    def scale_features(self, X_train, X_test):
-        X_train_scaled = self.scaler.fit_transform(X_train)
-        X_test_scaled = self.scaler.transform(X_test)
+    def scale_features(self, X_train, X_test, binary_cols=None):
+        """Scale only continuous numeric features; leave binary columns untouched."""
+        if binary_cols is None:
+            binary_cols = []
+        
+        cols_to_scale = [c for c in X_train.columns if c not in binary_cols]
+        
+        X_train_scaled = X_train.copy()
+        X_test_scaled = X_test.copy()
+        
+        if cols_to_scale:
+            X_train_scaled[cols_to_scale] = self.scaler.fit_transform(X_train[cols_to_scale])
+            X_test_scaled[cols_to_scale] = self.scaler.transform(X_test[cols_to_scale])
         
         return X_train_scaled, X_test_scaled
     
@@ -133,10 +143,17 @@ class OASISPreprocessor:
                 X, y, test_size=test_size, random_state=random_state, stratify=y
             )
         
-        X_train_scaled, X_test_scaled = self.scale_features(X_train, X_test)
+        # Identify binary/categorical columns that should not be scaled
+        binary_cols = []
+        for col in X_train.columns:
+            unique_vals = X_train[col].dropna().unique()
+            if len(unique_vals) <= 2 and set(unique_vals).issubset({0, 1, 0.0, 1.0}):
+                binary_cols.append(col)
         
-        X_train_scaled = pd.DataFrame(X_train_scaled, columns=self.feature_names)
-        X_test_scaled = pd.DataFrame(X_test_scaled, columns=self.feature_names)
+        if binary_cols:
+            print(f"  Binary columns (not scaled): {binary_cols}")
+        
+        X_train_scaled, X_test_scaled = self.scale_features(X_train, X_test, binary_cols=binary_cols)
         
         return X_train_scaled, X_test_scaled, y_train.reset_index(drop=True), y_test.reset_index(drop=True)
     

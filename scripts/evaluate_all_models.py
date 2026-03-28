@@ -44,7 +44,7 @@ def evaluate_all(data_dir, model_dir, output_dir):
         
         try:
             result = subprocess.run(
-                ['python', 'scripts/evaluate.py', '--model', model,
+                [sys.executable, 'scripts/evaluate.py', '--model', model,
                  '--data-dir', data_dir, '--model-dir', model_dir,
                  '--output-dir', output_dir],
                 capture_output=True,
